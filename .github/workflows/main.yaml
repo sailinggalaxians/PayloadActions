@@ -1,0 +1,54 @@
+name: Extract and Release
+
+on:
+    workflow_dispatch:
+        inputs:
+            ROM_URL:
+                description: "ROM_URL"
+                default: "https://drive.google.com/file/d/1zRGfsoRYrXj-6hgzaKJNVmw6LVH6C4VC/view?usp=drive_link"
+            DEVICE_NAME:
+                description: "DEVICE_NAME"
+                default: "SM-G715FN"
+            EXTRACTED_FILES:
+                description: "EXTRACTED_FILES"
+                default: "boot.img, dtbo.img, metadata.img, recovery.img, super.img, userdata.img, vbmeta.img, vbmeta_samsung.img"
+
+jobs:
+    build-and-release:
+        runs-on: ubuntu-latest
+        permissions: write-all
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Download file
+              run: curl -LJO ${{ github.event.inputs.ROM_URL }}
+
+            - name: Extract Payload
+              run: |
+                  chmod u+x .github/scripts/android-ota-extractor
+                  .github/scripts/android-ota-extractor *.zip
+                  echo "ZIP_FILE=$(basename -a *.zip)" >> $GITHUB_ENV
+                  echo "ZIP_FILE_SHA256=$(sha256sum *.zip | cut -d' ' -f1)" >> $GITHUB_ENV
+
+                  large_files=$(find . -maxdepth 1 -type f -size +2G)
+                  if [ -n "$large_files" ]; then
+                    echo -e "\n::warning:: Deleting files larger than 2 GB..."
+                    for file in $large_files; do
+                      echo "$file ($(du -h "$file" | awk '{print $1}'))" && rm "$file"
+                    done
+                  fi
+
+            - name: Upload to Release
+              uses: softprops/action-gh-release@v2
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              with:
+                  files: ${{ github.event.inputs.EXTRACTED_FILES }}
+                  name: ${{ github.event.inputs.DEVICE_NAME }}-${{ github.run_id }}
+                  tag_name: ${{ github.run_id }}
+                  body: |
+                      Device: ${{ github.event.inputs.DEVICE_NAME }}
+                      Filename: [${{ env.ZIP_FILE }}](${{ github.event.inputs.ROM_URL }})
+                      Extracted files: ${{ github.event.inputs.EXTRACTED_FILES }}
+                      SHA256: ${{ env.ZIP_FILE_SHA256 }}
