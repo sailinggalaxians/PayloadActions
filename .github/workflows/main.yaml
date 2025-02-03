@@ -1,4 +1,4 @@
-name: Extract and Release
+name: Lineage OS for Samsung Galaxy XCover Pro
 
 on:
   workflow_dispatch:
@@ -23,12 +23,17 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Install megatools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y megatools
+
       - name: Download file
         run: |
-          if ! curl -LJO "${{ github.event.inputs.ROM_URL }}"; then
-            echo "::error::Failed to download file"
-            exit 1
-          fi
+          mega_url="${{ github.event.inputs.ROM_URL }}"
+          file_id=$(echo "$mega_url" | cut -d'/' -f5 | cut -d'#' -f1)
+          key=$(echo "$mega_url" | cut -d'#' -f2)
+          megadl --path=./ "https://mega.nz/#!${file_id}!${key}"
 
       - name: Extract Payload
         run: |
