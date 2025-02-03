@@ -1,76 +1,75 @@
-name: Extract and Release
+name: Build Lineage for Samsung Galaxy XCover Pro
 
 on:
-    workflow_dispatch:
-        inputs:
-            ROM_URL:
-                description: "URL to ROM file"
-                required: true
-            DEVICE_NAME:
-                description: "Device name"
-                required: true
-            EXTRACTED_FILES:
-                description: "Files to extract and upload"
-                required: true
+  workflow_dispatch:
+    inputs:
+      ROM_URL:
+        description: "ROM_URL"
+        default: "https://mega.nz/file/wC8VybTb#_UxJQesYzJVN-OWbB8UQnOyHcyj_dBRYG-7M3Z6Zg3E"
+      DEVICE_NAME:
+        description: "DEVICE_NAME"
+        default: "SM-G715FN"
+      EXTRACTED_FILES:
+        description: "EXTRACTED_FILES"
+        default: "boot.img, dtbo.img, metadata.img, recovery.img, super.img, userdata.img, vbmeta.img, vbmeta_samsung.img"
 
 jobs:
-    build-and-release:
-        runs-on: ubuntu-latest
-        permissions: write-all
-        steps:
-            - name: Checkout code
-              uses: actions/checkout@v4
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-            - name: Download file
-              run: |
-                  echo "Downloading ROM from: ${{ github.event.inputs.ROM_URL }}"
-                  curl -LJO "${{ github.event.inputs.ROM_URL }}" || {
-                    echo "::error:: Failed to download file";
-                    exit 1;
-                  }
-                  ls -lh
+      - name: Download file
+        run: |
+          if ! curl -LJO "${{ github.event.inputs.ROM_URL }}"; then
+            echo "::error::Failed to download file"
+            exit 1
+          fi
 
-            - name: Extract Payload
-              run: |
-                  ZIP_FILE=$(ls *.zip 2>/dev/null | head -n 1)
-                  if [ -z "$ZIP_FILE" ]; then
-                    echo "::error:: No ZIP file found after download"
-                    exit 1
-                  fi
+      - name: Extract Payload
+        run: |
+          if [ ! -f .github/scripts/android-ota-extractor ]; then
+            echo "::error::android-ota-extractor script not found"
+            exit 1
+          fi
 
-                  chmod u+x .github/scripts/android-ota-extractor
-                  .github/scripts/android-ota-extractor "$ZIP_FILE"
+          chmod u+x .github/scripts/android-ota-extractor
+          
+          zip_file=$(ls *.zip 2>/dev/null | head -n 1)
+          if [ -z "$zip_file" ]; then
+            echo "::error::No zip file found"
+            exit 1
+          fi
+          
+          .github/scripts/android-ota-extractor "$zip_file"
+          
+          echo "ZIP_FILE=$zip_file" >> $GITHUB_ENV
+          echo "ZIP_FILE_SHA256=$(sha256sum "$zip_file" | cut -d' ' -f1)" >> $GITHUB_ENV
+          
+          large_files=$(find . -maxdepth 1 -type f -size +2G)
+          if [ -n "$large_files" ]; then
+            echo -e "\n::warning:: Deleting files larger than 2 GB..."
+            for file in $large_files; do
+              echo "$file ($(du -h "$file" | awk '{print $1}'))"
+              rm "$file"
+            done
+          fi
 
-                  echo "ZIP_FILE=$ZIP_FILE" >> $GITHUB_ENV
-                  echo "ZIP_FILE_SHA256=$(sha256sum "$ZIP_FILE" | cut -d' ' -f1)" >> $GITHUB_ENV
-
-                  large_files=$(find . -maxdepth 1 -type f -size +2G)
-                  if [ -n "$large_files" ]; then
-                    echo "::warning:: The following files are larger than 2 GB and will not be uploaded:"
-                    for file in $large_files; do
-                      echo "$file ($(du -h "$file" | awk '{print $1}'))"
-                    done
-                  fi
-
-            - name: Validate Extracted Files
-              run: |
-                  for file in $(echo "${{ github.event.inputs.EXTRACTED_FILES }}" | tr ',' ' '); do
-                    if [ ! -f "$file" ]; then
-                      echo "::error:: File $file not found!"
-                      exit 1
-                    fi
-                  done
-
-            - name: Upload to Release
-              uses: softprops/action-gh-release@v2
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-              with:
-                  files: ${{ github.event.inputs.EXTRACTED_FILES }}
-                  name: ${{ github.event.inputs.DEVICE_NAME }}-${{ github.run_id }}
-                  tag_name: ${{ github.run_id }}
-                  body: |
-                      Device: ${{ github.event.inputs.DEVICE_NAME }}
-                      Filename: [${{ env.ZIP_FILE }}](${{ github.event.inputs.ROM_URL }})
-                      Extracted files: ${{ github.event.inputs.EXTRACTED_FILES }}
-                      SHA256: ${{ env.ZIP_FILE_SHA256 }}
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          files: |
+            ${{ join(split(github.event.inputs.EXTRACTED_FILES, ','), '\n') }}
+          name: ${{ github.event.inputs.DEVICE_NAME }}-${{ github.run_id }}
+          tag_name: ${{ github.run_id }}
+          body: |
+            Device: ${{ github.event.inputs.DEVICE_NAME }}
+            Filename: [${{ env.ZIP_FILE }}](${{ github.event.inputs.ROM_URL }})
+            Extracted files: ${{ github.event.inputs.EXTRACTED_FILES }}
+            SHA256: ${{ env.ZIP_FILE_SHA256 }}
